@@ -1,187 +1,160 @@
 import tkinter as tk
 from tkinter import filedialog, messagebox, font, ttk
-from tkinter.font import Font
 import docx
+from docx.enum.text import WD_ALIGN_PARAGRAPH
 
-def convert_to_html_text(text):
-    lines = text.split("\n")
-    result = ""
+class HTMLConverter:
+    def __init__(self, master):
+        self.master = master
+        self.master.title("Conversor Avanzado a HTML")
+        self.setup_ui()
+        self.setup_tags()
 
-    for line in lines:
-        if line.strip():
-            result += f"<p>{line}</p>"
+    def setup_ui(self):
+        # Widgets principales
+        ttk.Button(self.master, text="Convertir DOCX", command=self.convert_docx).pack(pady=5)
+        
+        self.input_text = tk.Text(self.master, wrap=tk.WORD, height=15, undo=True)
+        self.input_text.pack(padx=10, pady=5, fill=tk.BOTH, expand=True)
+        
+        self.setup_toolbar()
+        
+        ttk.Button(self.master, text="Convertir Texto", command=self.convert_text).pack(pady=5)
+        
+        self.output_text = tk.Text(self.master, wrap=tk.WORD, height=15)
+        self.output_text.pack(padx=10, pady=5, fill=tk.BOTH, expand=True)
+
+    def setup_toolbar(self):
+        # Barra de herramientas con estilos
+        toolbar = ttk.Frame(self.master)
+        toolbar.pack(fill=tk.X)
+        
+        styles = [
+            ('bold', 'Negrita', self.toggle_style),
+            ('italic', 'Cursiva', self.toggle_style),
+            ('underline', 'Subrayado', self.toggle_style)
+        ]
+        
+        for style, text, cmd in styles:
+            btn = ttk.Button(toolbar, text=text, command=lambda s=style: cmd(s))
+            btn.pack(side=tk.LEFT, padx=2)
+        
+        # Selector de alineación
+        self.align_var = tk.StringVar(value='left')
+        align_menu = ttk.OptionMenu(toolbar, self.align_var, 'left', 'left', 'center', 'right', 'justify',
+                                   command=self.apply_alignment)
+        align_menu.pack(side=tk.RIGHT, padx=5)
+
+    def setup_tags(self):
+        # Configuración de tags para estilos
+        base_font = font.Font(font=self.input_text['font'])
+        self.input_text.tag_configure('bold', font=(base_font.actual()['family'], base_font.actual()['size'], 'bold'))
+        self.input_text.tag_configure('italic', font=(base_font.actual()['family'], base_font.actual()['size'], 'italic'))
+        self.input_text.tag_configure('underline', underline=True)
+        
+        # Tags para alineación
+        for align in ['left', 'center', 'right', 'justify']:
+            self.input_text.tag_configure(align, justify=align)
+
+    def toggle_style(self, style):
+        # Alternar estilos en texto seleccionado
+        current_tags = self.input_text.tag_names(tk.SEL_FIRST)
+        if style in current_tags:
+            self.input_text.tag_remove(style, tk.SEL_FIRST, tk.SEL_LAST)
         else:
-            result += "<p>&nbsp;</p>"
+            self.input_text.tag_add(style, tk.SEL_FIRST, tk.SEL_LAST)
 
-    return result
+    def apply_alignment(self, alignment):
+        # Aplicar alineación al párrafo actual
+        line_start = self.input_text.index(tk.INSERT + " linestart")
+        line_end = self.input_text.index(tk.INSERT + " lineend")
+        self.input_text.tag_add(alignment, line_start, line_end)
 
-def convert_to_html_docx(docx_path):
-    doc = docx.Document(docx_path)
-    html_text = ""
+    def get_html_styles(self, index):
+        # Obtener estilos aplicados en una posición
+        tags = self.input_text.tag_names(index)
+        styles = []
+        
+        if 'bold' in tags: styles.append('font-weight:bold')
+        if 'italic' in tags: styles.append('font-style:italic')
+        if 'underline' in tags: styles.append('text-decoration:underline')
+        
+        return '; '.join(styles)
 
-    for paragraph in doc.paragraphs:
-        if paragraph.text.strip():
-            html_text += f"<p>{paragraph.text}</p>"
-        else:
-            html_text += "<p>&nbsp;</p>"
+    def convert_text(self):
+        # Convertir texto con estilos a HTML
+        html = []
+        text_content = self.input_text.get(1.0, tk.END).split('\n')
+        
+        for line in text_content[:-1]:  # Ignorar última línea vacía
+            if not line.strip():
+                html.append('<p>&nbsp;</p>')
+                continue
+                
+            line_html = []
+            pos = self.input_text.search(line, 1.0, stopindex=tk.END)
+            
+            while pos:
+                end_pos = f"{pos}+{len(line)}c"
+                styles = self.get_html_styles(pos)
+                line_html.append(f'<span style="{styles}">{line}</span>')
+                pos = self.input_text.search(line, end_pos, stopindex=tk.END)
+                
+            alignment = self.input_text.tag_names(f"{self.input_text.index(line + '.0')} linestart")[0]
+            html.append(f'<p style="text-align:{alignment}">{"".join(line_html)}</p>')
+        
+        self.output_text.delete(1.0, tk.END)
+        self.output_text.insert(tk.END, '\n'.join(html))
 
-    return html_text
+    def convert_docx(self):
+        # Convertir documento Word a HTML
+        file_path = filedialog.askopenfilename(filetypes=[("Word files", "*.docx")])
+        if not file_path: return
+        
+        try:
+            doc = docx.Document(file_path)
+            html = []
+            
+            for para in doc.paragraphs:
+                para_html = []
+                alignment = self.get_docx_alignment(para.alignment)
+                
+                for run in para.runs:
+                    text = run.text.strip()
+                    if not text: continue
+                    
+                    styles = []
+                    if run.bold: styles.append('font-weight:bold')
+                    if run.italic: styles.append('font-style:italic')
+                    if run.underline: styles.append('text-decoration:underline')
+                    
+                    style_attr = f' style="{"; ".join(styles)}"' if styles else ''
+                    para_html.append(f'<span{style_attr}>{text}</span>')
+                
+                if para_html:
+                    html.append(f'<p style="text-align:{alignment}">{" ".join(para_html)}</p>')
+                else:
+                    html.append('<p>&nbsp;</p>')
+            
+            output_file = file_path.replace('.docx', '_converted.html')
+            with open(output_file, 'w', encoding='utf-8') as f:
+                f.write('\n'.join(html))
+            
+            messagebox.showinfo("Éxito", f"Archivo guardado en:\n{output_file}")
+        
+        except Exception as e:
+            messagebox.showerror("Error", f"No se pudo convertir el archivo:\n{str(e)}")
 
-def select_and_convert():
-    file_path = filedialog.askopenfilename(filetypes=[("Word files", "*.docx")])
+    def get_docx_alignment(self, alignment):
+        # Mapear alineación de Word a CSS
+        return {
+            WD_ALIGN_PARAGRAPH.LEFT: 'left',
+            WD_ALIGN_PARAGRAPH.CENTER: 'center',
+            WD_ALIGN_PARAGRAPH.RIGHT: 'right',
+            WD_ALIGN_PARAGRAPH.JUSTIFY: 'justify'
+        }.get(alignment, 'left')
 
-    if file_path:
-        html_text = convert_to_html_docx(file_path)
-        output_file = file_path.replace(".docx", "_converted.txt")
-
-        with open(output_file, "w", encoding="utf-8") as file:
-            file.write(html_text)
-
-        messagebox.showinfo("Conversión completada", f"El resultado se ha guardado en '{output_file}'")
-
-def convert_text():
-    text = input_text.get("1.0", tk.END)
-    if text.strip():
-        html_text = convert_to_html_text(text)
-        output_text.delete("1.0", tk.END)
-        output_text.insert(tk.END, html_text)
-    else:
-        messagebox.showerror("Error", "Por favor, ingrese texto válido.")
-
-
-
-def alignment_to_css(alignment):
-    if alignment == docx.enum.text.WD_ALIGN_PARAGRAPH.CENTER:
-        return "center"
-    elif alignment == docx.enum.text.WD_ALIGN_PARAGRAPH.RIGHT:
-        return "right"
-    elif alignment == docx.enum.text.WD_ALIGN_PARAGRAPH.JUSTIFY:
-        return "justify"
-    else:
-        return "left"
-
-
-
-def convert_to_html_docx(docx_path):
-    doc = docx.Document(docx_path)
-    html_text = ""
-
-    for paragraph in doc.paragraphs:
-        paragraph_html = ""
-
-        for run in paragraph.runs:
-            run_text = run.text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-            if run.bold and run.italic and run.underline:
-                run_html = f"<strong><em><u>{run_text}</u></em></strong>"
-            elif run.bold and run.italic:
-                run_html = f"<strong><em>{run_text}</em></strong>"
-            elif run.bold and run.underline:
-                run_html = f"<strong><u>{run_text}</u></strong>"
-            elif run.italic and run.underline:
-                run_html = f"<em><u>{run_text}</u></em>"
-            elif run.bold:
-                run_html = f"<strong>{run_text}</strong>"
-            elif run.italic:
-                run_html = f"<em>{run_text}</em>"
-            elif run.underline:
-                run_html = f"<u>{run_text}</u>"
-            else:
-                run_html = run_text
-
-            paragraph_html += run_html
-
-        if paragraph_html.strip():
-            html_text += f"<p>{paragraph_html}</p>"
-        else:
-            html_text += "<p>&nbsp;</p>"
-
-    return html_text
-
-def apply_style(style):
-    selected_text = input_text.selection_get()
-    start_index = input_text.index(tk.SEL_FIRST)
-    end_index = input_text.index(tk.SEL_LAST)
-    
-    if not selected_text:
-        return
-
-    current_font = font.nametofont(input_text.tag_cget(start_index, "font"))
-
-    if style == "bold":
-        if current_font.actual()["weight"] == "normal":
-            new_weight = "bold"
-        else:
-            new_weight = "normal"
-        current_font.configure(weight=new_weight)
-
-    if style == "italic":
-        if current_font.actual()["slant"] == "roman":
-            new_slant = "italic"
-        else:
-            new_slant = "roman"
-        current_font.configure(slant=new_slant)
-
-    input_text.tag_add("style", start_index, end_index)
-    input_text.tag_configure("style", font=current_font)
-
-
-
-def change_alignment():
-    selected_alignment = align_var.get()
-
-    if input_text.tag_ranges(tk.SEL):
-        input_text.tag_configure(selected_alignment, justify=selected_alignment)
-        input_text.tag_add(selected_alignment, input_text.index(tk.SEL_FIRST), input_text.index(tk.SEL_LAST))
-
-app = tk.Tk()
-app.title("Convertidor de Word/Texto a HTML")
-
-# Botón para seleccionar y convertir un archivo de Word
-select_button = tk.Button(app, text="Seleccionar archivo", command=select_and_convert)
-select_button.pack(pady=5)
-
-# Cuadro de texto para ingresar texto
-input_label = tk.Label(app, text="Ingrese texto:")
-input_label.pack(pady=5)
-input_text = tk.Text(app, wrap=tk.WORD, height=10)
-input_text.pack(padx=10, pady=5)
-
-# Configurar tags para negrita, cursiva y subrayado
-input_text_font = font.nametofont(input_text["font"])
-input_text.tag_configure("bold", font=(input_text_font.actual()["family"], input_text_font.actual()["size"], "bold"))
-input_text.tag_configure("italic", font=(input_text_font.actual()["family"], input_text_font.actual()["size"], "italic"))
-input_text.tag_configure("underline", font=(input_text_font.actual()["family"], input_text_font.actual()["size"], "underline"))
-
-# Botones y menús desplegables para aplicar estilos
-style_frame = tk.Frame(app)
-style_frame.pack(pady=5)
-
-bold_button = tk.Button(style_frame, text="Negrita", command=lambda: apply_style("bold"))
-bold_button.grid(row=0, column=0, padx=5)
-
-italic_button = tk.Button(style_frame, text="Cursiva", command=lambda: apply_style("italic"))
-italic_button.grid(row=0, column=1, padx=5)  # Corregido
-
-underline_button = tk.Button(style_frame, text="Subrayado", command=lambda: apply_style("underline"))
-underline_button.grid(row=0, column=2, padx=5)  # Corregido
-
-
-align_label = tk.Label(style_frame, text="Alineación:")
-align_label.grid(row=0, column=3, padx=5)
-
-align_var = tk.StringVar()
-align_var.set("left")
-align_menu = ttk.OptionMenu(style_frame, align_var, "left", "left", "center", "right", "justify", command=lambda _: change_alignment())
-align_menu.grid(row=0, column=4, padx=5)
-
-# Botón para convertir texto ingresado
-convert_button = tk.Button(app, text="Convertir texto", command=convert_text)
-convert_button.pack(pady=5)
-
-# Cuadro de texto para mostrar el resultado
-output_label = tk.Label(app, text="Resultado:")
-output_label.pack(pady=5)
-output_text = tk.Text(app, wrap=tk.WORD, height=10)
-output_text.pack(padx=10, pady=5)
-
-app.mainloop()
+if __name__ == "__main__":
+    root = tk.Tk()
+    app = HTMLConverter(root)
+    root.mainloop()
